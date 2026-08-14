@@ -8,11 +8,11 @@
 // 提供的真实服务：ctx.tools.register() 注册模型工具、ctx.llm.stream() 完成
 // 真正的文本生成、ctx.systemPrompt.section() 注册创作方法论提示段。
 //
-// 它注册 27 个 novel_* 网文写作工具，覆盖：润色、续写、大纲整理/优化/续写、
+// 它注册 28 个 novel_* 网文写作工具，覆盖：润色、续写、大纲整理/优化/续写、
 // 小说分析、拆书学习、灵感生成、世界观构建、角色设计、章节规划、场景写作、
 // 黄金三章、书名/标题、简介与梗概、作品评阅、改写、对话优化、文学翻译、
-// 剧情漏洞排查、起名、文风设定、情节推演，以及风格蒸馏、伏笔台账、
-// 角色状态更新、节奏检查。
+// 剧情漏洞排查、起名、文风设定、情节推演、风格蒸馏、伏笔台账、角色状态更新、
+// 节奏检查，以及全书一致性体检。
 export default {
   name: 'novel-tools',
   inject: ['llm', 'tools', 'systemPrompt'],
@@ -991,6 +991,136 @@ export default {
       ]),
       opts: { maxTokens: 6000 },
     });
+
+    // ---------------- 28. 全书一致性体检 ----------------
+    disposers.push(ctx.tools.register({
+      name: 'novel_consistency',
+      description: '全书一致性体检：扫描项目 archives/ 定稿与 settings/（角色/时间线/伏笔/世界观），统计章节字数与伏笔状态，并排查人物、战力、时间线、数字、设定的一致性矛盾，输出分级问题清单与修改建议。',
+      timeoutMs: 300000,
+      parameters: compileParams({
+        ...routeParams,
+        focus: { type: 'array', items: { type: 'string', enum: ['人物一致性', '战力体系', '时间线顺序', '伏笔兑现', '数字冲突', '设定矛盾'] }, description: '检查重点，默认全部' },
+        path: { type: 'string', description: '小说项目目录（默认当前会话工作区）' },
+      }),
+      output: {
+        schema: { type: 'object', properties: { result: { type: 'string' } }, additionalProperties: false },
+        render(args, value) { return [{ type: 'text', text: value.result }]; },
+      },
+      async execute(args, exec) {
+        const fs = ctx.get('fs');
+        if (fs === undefined) throw new Error('文件系统服务不可用，无法扫描项目文件');
+        const cwd = (typeof args.path === 'string' && args.path.trim())
+          ? args.path.trim()
+          : (exec.agent && exec.agent.session && exec.agent.session.header ? exec.agent.session.header.cwd : undefined);
+        if (!cwd) throw new Error('无法确定项目目录：请用 path 参数指定，或在小说项目目录下运行');
+
+        // 容错读文本/列目录
+        async function readRel(rel) {
+          try {
+            const t = await fs.resolve(rel, { cwd, signal: exec.signal });
+            const info = await fs.stat(t, exec.signal);
+            if (info === undefined || info.type !== 'file') return undefined;
+            return await fs.readText(t, exec.signal);
+          } catch { return undefined; }
+        }
+        async function listRel(rel) {
+          try {
+            const t = await fs.resolve(rel, { cwd, signal: exec.signal });
+            const info = await fs.stat(t, exec.signal);
+            if (info === undefined || info.type !== 'directory') return [];
+            return await fs.listDir(t, exec.signal);
+          } catch { return []; }
+        }
+        const isMd = (e) => e.type === 'file' && e.name.endsWith('.md');
+
+        // ── 收集文件 ──
+        const charFiles = (await listRel('settings/character-setting')).filter(isMd);
+        const archiveFiles = (await listRel('archives')).filter((e) => isMd(e) && !e.name.endsWith('.draft.md') && !e.name.endsWith('.anti-ai.md'));
+        const volumeFiles = (await listRel('volumes')).filter(isMd);
+        const chapterFiles = (await listRel('chapters')).filter(isMd);
+
+        // ── 机械统计（程序化，准确） ──
+        const sorted = archiveFiles.slice().sort((a, b) => (a.name < b.name ? -1 : 1));
+        const chapters = [];
+        let totalChars = 0;
+        for (const f of sorted) {
+          const content = (await readRel('archives/' + f.name)) || '';
+          const chars = content.replace(/\s/g, '').length;
+          totalChars += chars;
+          chapters.push({ name: f.name, chars, content });
+        }
+        const foreshadow = (await readRel('settings/foreshadowing.md')) || '';
+        const fsActive = (foreshadow.match(/未收束|未兑现|未回收|活跃/g) || []).length;
+        const fsDone = (foreshadow.match(/已收束|已兑现|已回收/g) || []).length;
+        const timeline = (await readRel('settings/timeline.md')) || '';
+        const timelineEvents = (timeline.match(/^[ \t]*[-*][ \t]+/gm) || []).length;
+
+        // ── 组装事实快照（供 LLM 语义体检） ──
+        const charSnapshot = [];
+        for (const f of charFiles) {
+          const c = (await readRel('settings/character-setting/' + f.name)) || '';
+          charSnapshot.push(`【${f.name.replace(/\.md$/, '')}】\n${c.slice(0, 400)}`);
+        }
+        const chapterList = chapters.map((c) => `- ${c.name}（约 ${c.chars} 字）`).join('\n');
+        const excerpts = [];
+        for (const c of chapters) {
+          excerpts.push(`### ${c.name}\n${c.content.slice(0, 260)}`);
+        }
+        const story = (await readRel('story.md')) || '';
+        const world = (await readRel('settings/world-setting.md')) || '';
+        const genre = (await readRel('settings/genre-setting.md')) || '';
+        const volumeText = (await Promise.all(volumeFiles.map((f) => readRel('volumes/' + f.name)))).filter(Boolean).join('\n');
+
+        const snapshot = compose([
+          field('题材设定', genre.slice(0, 1000)),
+          field('世界观要点', world.slice(0, 1500)),
+          field('主线/卷规划', (story + '\n' + volumeText).slice(0, 2000)),
+          field('角色档案', charSnapshot.join('\n\n')),
+          field('时间线', timeline.slice(0, 2000)),
+          field('伏笔台账', foreshadow.slice(0, 2000)),
+          '【章节清单与字数】\n' + chapterList,
+          '【各章开篇片段】\n' + excerpts.join('\n\n'),
+        ]);
+
+        // ── LLM 语义体检 ──
+        const system = `${commonSystem}
+
+你现在担任长篇网文全书一致性审查员，扫描整本书的事实快照，找出前后矛盾与自洽性问题。
+
+要求：
+1. 只依据「事实快照」做判断，不臆测；快照没覆盖到的地方标注「快照不足，建议人工核查」。
+2. 按检查重点排查：
+   - 人物一致性：称呼/名字前后不一、性格行为突兀跳变、关系错乱；
+   - 战力体系：等级/力量边界前后矛盾、越级无解释；
+   - 时间线顺序：日期/时序倒错、年龄对不上；
+   - 伏笔兑现：台账「未收束」但正文疑似未推进、或已回收却仍标记未收束；
+   - 数字冲突：钱数、人数、天数、年龄前后对不上；
+   - 设定矛盾：世界观规则自相矛盾。
+3. 输出分级清单：每条标【严重】【重要】【建议】，给出现位置（哪章/哪个文件）与修改方向。
+4. 结尾给「总体自洽度」一句话结论。`;
+        const user = `请对下面这部小说做全书一致性体检，重点：${pick(args.focus, ['人物一致性', '战力体系', '时间线顺序', '伏笔兑现', '数字冲突', '设定矛盾']).join('、')}。
+
+【全书事实快照】
+${snapshot}
+
+请输出：一、分级问题清单（按【严重】→【重要】→【建议】）；二、总体自洽度结论。`;
+
+        const aiReport = await generate(system, user, args, exec, { maxTokens: 8000 });
+
+        const mechanical = [
+          '【机械统计（程序化，准确）】',
+          `- 定稿章节：${chapters.length} 章`,
+          `- 全书正文字数（去空白）：约 ${totalChars} 字`,
+          `- 角色档案：${charFiles.length} 个角色`,
+          `- 伏笔台账：未收束/活跃约 ${fsActive} 处，已收束/已兑现约 ${fsDone} 处`,
+          `- 时间线事件条数：${timelineEvents} 条`,
+          `- 章纲文件：${chapterFiles.length} 个`,
+          '',
+        ].join('\n');
+
+        return { result: mechanical + '\n' + aiReport };
+      },
+    }));
 
     // ---------------- 创作方法论提示段 ----------------
     // 随预设注入 systemPrompt，确保即使 novel_* 工具不可用，Agent 也具备

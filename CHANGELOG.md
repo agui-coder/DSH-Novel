@@ -9,6 +9,8 @@
 - **深度知识库**：移植 awesome-novel-agent 的 `knowledge/`（反 AI 规则、24 套题材画像、场景/剧情/角色/书名方法论、格式规范、风格蒸馏）到预设目录，由 `novel-knowledge.mjs` 在预设挂载时注册为 **11 个运行时 skill**（`novel-knowledge` 索引 + 8 个分区 + `novel-agents` + `novel-project-init`）。
 - **9-Agent 长篇流水线**：移植 awesome-novel-agent 的 9 个写作 agent（总指挥 + volume-planner / chapter-planner / prompt-crafter / writer / anti-ai / reader / updater / style-distiller）与 18 个环节 SOP，映射到 DSH 原生 `subagent` + order 文件 + `.agent/status.md#phase` 路由。
 - **4 个新写作工具**（`novel-tools.mjs` 23→27，`novel-assistant.host.js` 同步）：`novel_style_distill`（风格蒸馏）、`novel_foreshadowing`（伏笔台账）、`novel_character_state`（角色状态）、`novel_pacing_check`（节奏检查）。
+- **全书一致性体检工具** `novel_consistency`：扫描项目 archives/ 定稿 + settings/，输出机械统计（章节字数、伏笔状态、时间线、角色数）+ LLM 语义体检（人物/战力/时间线/数字/设定矛盾分级清单）。
+- **SOP 深度润色**：9 个 agent 定义的英文标题中文化（Hand-off Protocol→交接协议 等），ANA 式「N(描述)」交叉引用改为自然中文表述。
 - **项目骨架初始化**：`templates/project/`（story / settings / volumes / chapters / prompts / archives / memory / .agent），经 `novel-project-init` skill 在任意工作区创建；记忆系统 DSH 化为 `memory/`（动态 + 永久同目录）。
 - **阅览窗口安装 skill**：`skills/novel-reading-window/`，在 `cordis` 预设会话里一句话装好动态插件（Host + Client）。
 
