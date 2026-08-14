@@ -1,7 +1,8 @@
 // 网文助手 (Novel Assistant) — 动态 Cordis 插件 Host 半部源码
-// 注册 23 个模型工具：润色、续写、大纲整理/优化/续写、分析、拆书、灵感、
+// 注册 27 个模型工具：润色、续写、大纲整理/优化/续写、分析、拆书、灵感、
 // 世界观、角色、章节规划、场景写作、黄金三章、书名、简介、评阅、改写、
-// 对话优化、翻译、漏洞排查、起名、文风设定、情节推演。
+// 对话优化、翻译、漏洞排查、起名、文风设定、情节推演，以及风格蒸馏、
+// 伏笔台账、角色状态更新、节奏检查。
 // 每个工具通过 Host `llm` 服务调用当前会话默认模型完成真正的文本生成。
 // 本插件同时提供「小说阅览窗口」的文件读写 RPC（nreader:list/read/write），Client 半部见 novel-assistant.client.js。
 return {
@@ -843,6 +844,120 @@ return {
         field('思考角度', pick(args.angle, ['多种可能走向'])),
         args.count ? `【方案数量】${args.count} 个` : '',
         field('约束', args.constraints),
+      ]),
+      opts: { maxTokens: 6000 },
+    });
+
+    // ---------------- 24. 风格蒸馏 ----------------
+    tool({
+      name: 'novel_style_distill',
+      description: '风格蒸馏：从参考样本或已归档章节提炼量化文风参数（句长/对话占比/形容词密度/段落长度/感官描写密度等），生成文风主卡与分场景卡，可增量校准。',
+      timeoutMs: 180000,
+      parameters: {
+        ...routeParams,
+        sample: { type: 'string', description: '文风样本（把想学的文风文章或已归档正文放在这里）', required: true },
+        scenes: { type: 'array', items: { type: 'string', enum: ['对话', '打斗', '群像', '环境', '内心独白', '转场'] }, description: '要生成的分场景卡类型，默认全部' },
+        genre: { type: 'string', description: '题材类型（可选）' },
+      },
+      system: (args) => `${commonSystem}
+
+你现在担任文风蒸馏师，把样本提炼成可量化、可复用的写作参数，越用越贴合作者风格。
+
+要求：
+1. 先量化统计样本文风，至少覆盖：平均句长（字）、长短句比例、对话占比（%）、形容词/副词密度（每千字）、心理描写密度、感官描写密度（五感）、段落平均长度、叙事距离（全知/限知）。
+2. 提炼「文风主卡」：一句话风格概括 + 量化参数表 + 可模仿要点（句式、用词、节奏、对话、留白习惯）。
+3. 按「分场景卡类型」生成场景卡：每类场景给出该文风下的写法倾向（如打斗短句快节奏、对话口语化有潜台词），供写作时按场景注入。
+4. 若有「题材」，把题材风格基线一并纳入（题材通用项 + 该样本的个性化差异 delta）。
+5. 输出为可保存为 Markdown 的卡片文本（主卡 + 各场景卡），并在末尾给出「后续增量校准建议」（再给新样本时如何只更新差异）。`,
+      user: (args) => compose([
+        field('文风样本', args.sample),
+        field('分场景卡类型', pick(args.scenes, ['对话', '打斗', '群像', '环境', '内心独白', '转场'])),
+        field('题材类型', args.genre),
+      ]),
+      opts: { maxTokens: 6000 },
+    });
+
+    // ---------------- 25. 伏笔台账 ----------------
+    tool({
+      name: 'novel_foreshadowing',
+      description: '伏笔台账：扫描正文中的未兑现/新埋钩子，输出伏笔台账（ID/铺设位置/计划回收/状态），检测陈旧度与集中收束风险。',
+      timeoutMs: 180000,
+      parameters: {
+        ...routeParams,
+        chapters: { type: 'string', description: '已写章节正文或摘要（可多章）', required: true },
+        existing: { type: 'string', description: '现有伏笔台账（有则提供，用于增量更新）' },
+        plan: { type: 'string', description: '大纲/后续计划（用于判断钩子是否已规划回收，可选）' },
+      },
+      system: (args) => `${commonSystem}
+
+你现在担任伏笔档案管理员，维护一本书的伏笔台账，防止遗忘或集中收束。
+
+要求：
+1. 扫描正文，识别所有伏笔/钩子：明埋（读者知道但角色不知道）、暗埋（双方都不知道、留待揭晓）、承诺（作者向读者许诺的期待）。
+2. 每条伏笔给出：ID、铺设位置（章/段）、类型（明/暗/承诺）、内容一句话、计划回收点（若从大纲能看出）、当前状态（未兑现/已部分兑现/已回收/疑似遗忘）。
+3. 风险检测：陈腐伏笔（埋了超过 N 章未动）、集中收束风险（多个伏笔挤在同一处回收导致拥挤）、死钩（结尾承诺但后文从未回应）。
+4. 输出：更新后的伏笔台账（合并「现有台账」做增量）+ 风险清单 + 处置建议。`,
+      user: (args) => compose([
+        field('已写章节', args.chapters),
+        field('现有伏笔台账', args.existing),
+        field('大纲/后续计划', args.plan),
+      ]),
+      opts: { maxTokens: 6000 },
+    });
+
+    // ---------------- 26. 角色状态更新 ----------------
+    tool({
+      name: 'novel_character_state',
+      description: '角色状态：读完本章正文后，追加角色状态历史、情绪弧线与人际关系变化，生成下一章写作时可直接查阅的角色最新状态。',
+      timeoutMs: 180000,
+      parameters: {
+        ...routeParams,
+        chapter: { type: 'string', description: '本章正文（或本章要点）', required: true },
+        characters: { type: 'string', description: '现有角色档案（设定/性格/关系，可选）' },
+        state: { type: 'string', description: '现有角色状态记录（有则提供，用于增量追加）' },
+      },
+      system: (args) => `${commonSystem}
+
+你现在担任角色档案管理员，在每章归档后追加角色状态，让下一章写作时知道角色「现在是什么样」。
+
+要求：
+1. 从本章正文提炼每个出场角色的：当前状态（身份/处境/能力变化）、情绪弧线（起→转折→落，本章经历了什么情绪变化）、人际关系变化（与谁更近/更远/结怨/结盟）、新获得的信息或目标变化。
+2. 按角色分条追加到「现有状态记录」，保持历史可追溯（每条标注来源章节），不覆盖旧记录。
+3. 若与现有角色档案矛盾，标注「⚠️ 与设定冲突」并提示作者确认。
+4. 输出：更新后的角色状态记录（可直接保存/追加到角色档案）。`,
+      user: (args) => compose([
+        field('本章正文', args.chapter),
+        field('现有角色档案', args.characters),
+        field('现有角色状态记录', args.state),
+      ]),
+      opts: { maxTokens: 6000 },
+    });
+
+    // ---------------- 27. 节奏检查 ----------------
+    tool({
+      name: 'novel_pacing_check',
+      description: '节奏检查：分析最近章节的情绪强度走势，检测连续高压或连续平淡，给出节奏调整建议，防止读者疲劳或流失。',
+      timeoutMs: 150000,
+      parameters: {
+        ...routeParams,
+        chapters: { type: 'string', description: '最近若干章的正文或摘要（按顺序）', required: true },
+        window: { type: 'integer', description: '分析的章节窗口数，默认 10' },
+      },
+      system: (args) => `${commonSystem}
+
+你现在担任网文节奏顾问，检查最近章节的节奏健康度。
+
+要求：
+1. 逐章判定情绪强度等级（高压冲突 / 中等推进 / 平淡过渡 / 舒缓日常），并标出每章的情绪高点与结尾钩子强度（强/中/弱/无）。
+2. 检测风险：
+   - 连续高压 ≥3 章：读者疲劳，建议插入舒缓/日常/收获章；
+   - 连续平淡 ≥2 章：读者流失，建议尽快给爽点或钩子；
+   - 结尾钩子连续偏弱：留存下降，建议强化章末钩子。
+3. 给出「张弛曲线」的文字描述（哪里该紧、哪里该松），并给具体调整建议（在哪些章插入什么类型的节拍）。
+4. 输出：逐章节奏判定表 + 风险清单 + 调整建议。`,
+      user: (args) => compose([
+        field('最近章节', args.chapters),
+        args.window ? `【分析窗口】最近 ${args.window} 章` : '',
       ]),
       opts: { maxTokens: 6000 },
     });
