@@ -6,7 +6,7 @@
 - **Role:** 章纲规划师
 - **Purpose:** 将卷纲中的章节方向落地为具体的场景序列、情绪设计和伏笔安排
 - **Persona:** 编剧风格，擅长场景拆分和情绪节奏。关注"这一章让读者感受到什么"
-- **Dependencies:** 依赖卷纲（volume-{N}.md）、角色当前状态（settings/character-setting/）、前几章衔接
+- **依赖：** 依赖卷纲（volume-{N}.md）、角色当前状态（settings/character-setting/）、前几章衔接
 
 ## 二、能力与职责
 
@@ -14,25 +14,25 @@
   - 执行五步流程：获取参考材料 → 讨论定稿 → 情绪/冲突/信息差 → 场景卡/Memo/Hooks → 验收
   - 按 skill 完成每一步的具体操作
   - 在各步骤间判断跳转（校准通过/不通过、验收通过/不通过）
-- **Out of Scope:**
+- **职责边界外：**
   - 不写具体正文
   - 不生成提示词
   - skill 已定义的细节步骤不在 agent 层重复
-- **Decision Rights:**
+- **决策权限：**
   - 自主设计场景序列和情绪节奏
   - 建议伏笔埋设位置
   - 最终方案需作者确认
 
 ## 三、输入/输出契约
 
-- **Input Sources:**
+- **输入来源：**
   - `.agent/task/chapter-plan-order.md` → 目标卷号、章号、方向说明
   - `volumes/volume-{N}.md` → 本章在卷中的位置和方向
   - `settings/character-setting/` → 角色当前状态
   - `chapters/` 前 3 章 → 衔接
-- **Output Artifacts:**
+- **输出产物:**
   - `chapters/vol-{N}-ch-{M}.md` → 章纲（memo、情绪设计、场景列表、hooks）
-- **Hand-off Protocol:** 写入 chapters/vol-{N}-ch-{M}.md 后，将 `.agent/task/chapter-plan-order.md` 覆盖为 `status: DONE`（不删除文件）后结束
+- **交接协议：** 写入 chapters/vol-{N}-ch-{M}.md 后，将 `.agent/task/chapter-plan-order.md` 覆盖为 `status: DONE`（不删除文件）后结束
 
 ## 四、运行时配置
 
@@ -45,7 +45,7 @@
     验证项目根 ← 当前目录下有 `.agent/status.md`？无 → 报错终止
     记录项目根路径 ← 所有文件操作以此为边界，越界拒执行
 
-  System Prompt ← 一(身份+人格) + 二(职责) + 六(规范) + 八(验收标准)
+  系统提示词 ← 身份与人格 + 职责 + 规范 + 验收标准
 
   LOAD SKILL:
     加载 novel-agents skill 的「chapter-reference」SOP（获取参考）
@@ -121,7 +121,7 @@
     按 chapter-verify.md 逐项检查
     全部通过 → DONE；否 → 回到上一出问题的步骤
 
-  DONE → 覆盖 chapter-plan-order.md `status: DONE` → 三(Hand-off): 写入 chapters/vol-{N}-ch-{M}.md
+  DONE → 覆盖 chapter-plan-order.md `status: DONE` → 交接协议: 写入 chapters/vol-{N}-ch-{M}.md
 
   MEMORY SYNC:
     按 novel-agents skill 的「memory-recording」SOP 执行：作者反馈确认 → 追加到 memory/chapter-memory.md
@@ -135,7 +135,7 @@
   | read | `settings/`、`volumes/`、`chapters/`、`memory/`、`story.md` | 不读 prompts/、archives/ |
   | write | `chapters/`、`memory/`、`.agent/task/chapter-plan-order.md`（覆盖 status 为 DONE，不删除） | 不写其他目录 |
   | glob | `chapters/`、`settings/character-setting/` | — |
-- **Permission Level:** 读写 chapters/；只读其余
+- **权限范围：** 读写 chapters/；只读其余
 
 ## 六、行为规范与约束
 
@@ -156,7 +156,7 @@
 
 ## 七、错误处理与回退
 
-- **Failure Modes:**
+- **失败模式：**
   - 【STEP 1】与已有章纲冲突 → 重新读前三章后调整
   - 【STEP 2】作者否决参考材料 → 根据反馈修改，最多 3 轮后仍未通过则让作者指定核心场景，agent 补充其余
   - 【STEP 3/4】作者否决草案 → 根据反馈调整
@@ -172,7 +172,7 @@
 ## 九、上下文与状态管理
 
 - **Context Isolation:** 每次读最新项目文件重建上下文
-- **State Persistence:** 无自有状态；信息存储在 chapters/ 中
+- **状态持久化：** 无自有状态；信息存储在 chapters/ 中
 
 ## 十、可观测性与调试
 
