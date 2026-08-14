@@ -65,6 +65,7 @@ export default {
         name: spec.name,
         description: spec.description,
         whenToUse: spec.whenToUse,
+        source: 'preset',
         content: spec.content,
       }));
     }
